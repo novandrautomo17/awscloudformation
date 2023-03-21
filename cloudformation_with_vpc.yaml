@@ -1,0 +1,608 @@
+# The latest template format version is 2010-09-09 and is currently the only valid value
+# as per https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/format-version-structure.html
+AWSTemplateFormatVersion: 2010-09-09
+
+# The value for the description declaration must be a literal string that is between 0 and 1024 bytes in length. 
+# You cannot use a parameter or function to specify the description.
+Description: >
+    A template in order to build a complete infrastucture
+    
+# Docs: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/parameters-section-structure.html
+Parameters:
+  # SSH access IP address range
+  SSHLocation: 
+    Description: The IP address range that can be used to SSH to the Bastion hosts
+    Type: String
+    MinLength: 9
+    MaxLength: 18
+    Default: 0.0.0.0/0
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: must be a valid IP CIDR range of the for x.x.x.x/x.
+
+  # EC2 key pair to be used
+  KeyName: 
+    Description: Name of an existing EC2 key pair to enable SSH access to the instances
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair
+  
+  # CIDR block
+  VpcCidrBlock:
+    Description: The CIDR block to be used by the VPC
+    Type: String
+    MinLength: 9
+    MaxLength: 18
+    Default: 10.10.0.0/20
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: must be a valid IP CIDR range of the for x.x.x.x/x.
+
+  # Mask size for IPv4 subnet addresses
+  IPv4MaskSize:
+    Description: Mask size for IPv4 subnet addresses
+    Type: Number
+    Default: 8
+    MinValue: 4
+    MaxValue: 8
+    ConstraintDescription: must be a number between 4 and 8
+
+  # Whether creation of private subnets is also required
+  PrivateResourcesCreation:
+    Description: Do you want to create private resources as well?
+    Type: String
+    Default: true
+    AllowedValues: [true, false]
+
+  # EC2 allowed instance types
+  InstanceType:
+    Description: EC2 allowed instance types to be used 
+    Type: String
+    Default: t2.micro
+    AllowedValues: 
+      - t2.micro
+      - t2.small
+      - t2.medium
+
+# Docs: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/conditions-section-structure.html
+Conditions:
+  # Creation of private resources
+  CreatePrivateResources:
+    !Equals [true, !Ref PrivateResourcesCreation]
+
+# Docs: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/mappings-section-structure.html
+Mappings:
+  # Map Linux2 AMI id to region
+  AWSRegionUbuntuAMI:
+    us-east-1:      # N. Virginia
+      HVM64: ami-0dba2cb6798deb6d8
+    ap-southeast-1: # Singapore
+      HVM64: ami-0e03b8332a1d7b68a
+# Docs: 
+#   https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/resources-section-structure.html
+#   https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-template-resource-type-ref.html
+Resources:
+  # VPC
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+        CidrBlock: !Ref VpcCidrBlock
+        EnableDnsHostnames: true
+        EnableDnsSupport: true
+        InstanceTenancy: default
+        Tags:
+            - Key: Name
+              Value: !Join ['', [!Ref 'AWS::StackName', '-vpc' ]]
+  
+  # Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-igw 
+
+  # (attach Internet Gateway to VPC)
+  AttachGatewayToVPC:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+  
+  # Subnets
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs ]
+      CidrBlock: !Select 
+        - 0
+        - Fn::Cidr: 
+          - !Ref VpcCidrBlock 
+          - !If [CreatePrivateResources, 4, 2]
+          - !Ref IPv4MaskSize
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-public-subnet-a
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs ]
+      CidrBlock: !Select 
+        - 1
+        - Fn::Cidr: 
+          - !Ref VpcCidrBlock 
+          - !If [CreatePrivateResources, 4, 2]
+          - !Ref IPv4MaskSize
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-public-subnet-b
+  
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Condition: CreatePrivateResources
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs ]
+      CidrBlock: !Select 
+        - 2
+        - Fn::Cidr: 
+          - !Ref VpcCidrBlock 
+          - !If [CreatePrivateResources, 4, 2]
+          - !Ref IPv4MaskSize
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-private-subnet-a
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Condition: CreatePrivateResources
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs ]
+      CidrBlock: !Select 
+        - 3
+        - Fn::Cidr: 
+          - !Ref VpcCidrBlock 
+          - !If [CreatePrivateResources, 4, 2]
+          - !Ref IPv4MaskSize
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-private-subnet-b
+
+  # ElasticIP
+  NatEipPublicSubnetA:
+    Type: AWS::EC2::EIP
+    Condition: CreatePrivateResources
+    Properties:
+        Domain: !Ref VPC
+
+  NatEipPublicSubnetB:
+    Type: AWS::EC2::EIP
+    Condition: CreatePrivateResources
+    Properties:
+        Domain: !Ref VPC
+
+  # NAT Gateway
+  NatGatewayA:
+    Type: AWS::EC2::NatGateway
+    Condition: CreatePrivateResources
+    Properties: 
+      AllocationId: !GetAtt [NatEipPublicSubnetA, AllocationId]
+      SubnetId: !Ref PublicSubnetA
+      Tags: 
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-nat-gw-a
+
+  NatGatewayB:
+    Type: AWS::EC2::NatGateway
+    Condition: CreatePrivateResources
+    Properties: 
+      AllocationId: !GetAtt [NatEipPublicSubnetB, AllocationId]
+      SubnetId: !Ref PublicSubnetB
+      Tags: 
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-nat-gw-b
+      
+  # Route Tables
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-public-route-table
+
+  # (attach IGW to public route table)
+  PublicRouteTableIgwRoute:   
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway  
+      
+  PrivateRouteTableA:
+    Type: AWS::EC2::RouteTable
+    Condition: CreatePrivateResources
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-private-route-table-a
+
+  PrivateRouteTableB: 
+    Type: AWS::EC2::RouteTable
+    Condition: CreatePrivateResources
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-private-route-table-b
+
+  # (attach NAT GWs to private route table)
+  PrivateRouteTableNatARoute:   
+    Type: AWS::EC2::Route
+    Condition: CreatePrivateResources
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableA
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayA
+
+  PrivateRouteTableNatBRoute:   
+    Type: AWS::EC2::Route
+    Condition: CreatePrivateResources
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableB
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayB 
+
+  # (associate public subnets to public route table)
+  PublicSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+  
+  PublicSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  # (associate private subnets to public route table)
+  PrivateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreatePrivateResources
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTableA
+  
+  PrivateSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreatePrivateResources
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTableB
+
+  ### NACLs
+  PublicNacl:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-public-nacl
+
+  PublicNaclEntryInbound:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+        NetworkAclId: !Ref PublicNacl
+        CidrBlock: 0.0.0.0/0
+        RuleNumber: 100
+        Protocol: -1
+        RuleAction: allow
+        Egress: false
+
+  PublicNaclEntryOutbound:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+        NetworkAclId: !Ref PublicNacl
+        CidrBlock: 0.0.0.0/0
+        RuleNumber: 100
+        Protocol: -1
+        RuleAction: allow
+        Egress: true
+
+  PrivateNacl:
+    Type: AWS::EC2::NetworkAcl
+    Condition: CreatePrivateResources
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-private-nacl
+
+  PrivateNaclEntryInbound:
+    Type: AWS::EC2::NetworkAclEntry
+    Condition: CreatePrivateResources
+    Properties:
+        NetworkAclId: !Ref PrivateNacl
+        CidrBlock: 0.0.0.0/0
+        RuleNumber: 100
+        Protocol: -1
+        RuleAction: allow
+        Egress: false
+
+  PrivateNaclEntryOutbound:
+    Type: AWS::EC2::NetworkAclEntry
+    Condition: CreatePrivateResources
+    Properties:
+        NetworkAclId: !Ref PrivateNacl
+        CidrBlock: 0.0.0.0/0
+        RuleNumber: 100
+        Protocol: -1
+        RuleAction: allow
+        Egress: true
+
+  # Explicitly associate public subnets to public NACL
+  NaclAssociationPublicSubnetA:
+     Type: AWS::EC2::SubnetNetworkAclAssociation
+     Properties:
+       SubnetId: !Ref PublicSubnetA
+       NetworkAclId: !Ref PublicNacl
+
+  NaclAssociationPublicSubnetB:
+     Type: AWS::EC2::SubnetNetworkAclAssociation
+     Properties:
+       SubnetId: !Ref PublicSubnetB
+       NetworkAclId: !Ref PublicNacl
+  
+  NaclAssociationPrivateSubnetA:
+     Type: AWS::EC2::SubnetNetworkAclAssociation
+     Condition: CreatePrivateResources
+     Properties:
+       SubnetId: !Ref PrivateSubnetA
+       NetworkAclId: !Ref PrivateNacl
+
+  NaclAssociationPrivateSubnetB:
+     Type: AWS::EC2::SubnetNetworkAclAssociation
+     Condition: CreatePrivateResources
+     Properties:
+       SubnetId: !Ref PrivateSubnetB
+       NetworkAclId: !Ref PrivateNacl
+
+  # Security Groups
+  PublicSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SSH & Access from My IP for public subnets
+      GroupName: public-ssh-and-ping-sg
+      VpcId:
+        Ref: VPC
+      SecurityGroupIngress:
+        - CidrIp: !Ref SSHLocation 
+          Description: SSH Access
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+        - CidrIp: !Ref SSHLocation 
+          Description: Ping Access
+          IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+        - CidrIp: !Ref SSHLocation 
+          Description: HTTP Access
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          Description: Allow all
+          FromPort: -1
+          IpProtocol: "-1"
+          ToPort: -1
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-ssh-ping-public-sg
+        - Key: GroupName
+          Value: public-ssh-and-ping-sg
+
+  PrivateSg:
+    Type: AWS::EC2::SecurityGroup
+    Condition: CreatePrivateResources
+    Properties:
+      GroupDescription: SSH and Ping access for private subnets
+      GroupName: private-ssh-and-ping-sg
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - CidrIp: !Ref VpcCidrBlock
+          Description: SSH Access
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+        - CidrIp: !Ref VpcCidrBlock
+          Description: Ping Access
+          IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+        - CidrIp: !Ref VpcCidrBlock
+          Description: HTTP Access
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          Description: Allow all
+          FromPort: -1
+          IpProtocol: "-1"
+          ToPort: -1
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-ssh-ping-private-sg
+        - Key: GroupName
+          Value: private-ssh-and-ping-sg
+
+  # EC2 
+  Jumphost:
+    Type: AWS::EC2::Instance
+    Properties: 
+      ImageId: !FindInMap [AWSRegionUbuntuAMI, !Ref 'AWS::Region', HVM64]
+      KeyName: !Ref KeyName
+      InstanceType: !Ref InstanceType
+      AvailabilityZone: !Select [ 0, !GetAZs ]
+      SecurityGroupIds: [!Ref PublicSg]
+      SubnetId: !Ref PublicSubnetA
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-jumphost
+
+  Development:
+    Type: AWS::EC2::Instance
+    Condition: CreatePrivateResources
+    Properties: 
+      ImageId: !FindInMap [AWSRegionUbuntuAMI, !Ref 'AWS::Region', HVM64]
+      KeyName: !Ref KeyName
+      InstanceType: !Ref InstanceType
+      AvailabilityZone: !Select [ 0, !GetAZs ]
+      SecurityGroupIds: [!Ref PrivateSg]
+      SubnetId: !Ref PrivateSubnetA
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-development
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            apt update -y
+            apt install -y git python3-pip build-essential wget python3-dev python3-venv \
+            python3-wheel libfreetype6-dev libxml2-dev libzip-dev libldap2-dev libsasl2-dev \
+            python3-setuptools node-less libjpeg-dev zlib1g-dev libpq-dev \
+            libxslt1-dev libldap2-dev libtiff5-dev libjpeg8-dev libopenjp2-7-dev \
+            liblcms2-dev libwebp-dev libharfbuzz-dev libfribidi-dev libxcb1-dev
+            useradd -m -d /opt/odoo15 -U -r -s /bin/bash odoo15
+            apt install postgresql
+            su - postgres -c "createuser -s odoo15"
+            wget https://github.com/wkhtmltopdf/wkhtmltopdf/releases/download/0.12.5/wkhtmltox_0.12.5-1.bionic_amd64.deb
+            apt install ./wkhtmltox_0.12.5-1.bionic_amd64.deb
+            su - odoo15
+            git clone https://www.github.com/odoo/odoo --depth 1 --branch 15.0 /opt/odoo15/odoo
+            cd /opt/odoo15
+            python3 -m venv odoo-venv
+            source odoo-venv/bin/activate
+            pip3 install wheel
+            pip3 install -r odoo/requirements.txt
+            deactivate
+            mkdir /opt/odoo15/odoo-custom-addons
+            exit
+
+  Staging:
+    Type: AWS::EC2::Instance
+    Condition: CreatePrivateResources
+    Properties: 
+      ImageId: !FindInMap [AWSRegionUbuntuAMI, !Ref 'AWS::Region', HVM64]
+      KeyName: !Ref KeyName
+      InstanceType: !Ref InstanceType
+      AvailabilityZone: !Select [ 0, !GetAZs ]
+      SecurityGroupIds: [!Ref PrivateSg]
+      SubnetId: !Ref PrivateSubnetA
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-staging
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            apt update -y
+            apt install -y git python3-pip build-essential wget python3-dev python3-venv \
+            python3-wheel libfreetype6-dev libxml2-dev libzip-dev libldap2-dev libsasl2-dev \
+            python3-setuptools node-less libjpeg-dev zlib1g-dev libpq-dev \
+            libxslt1-dev libldap2-dev libtiff5-dev libjpeg8-dev libopenjp2-7-dev \
+            liblcms2-dev libwebp-dev libharfbuzz-dev libfribidi-dev libxcb1-dev
+            useradd -m -d /opt/odoo15 -U -r -s /bin/bash odoo15
+            apt install postgresql
+            su - postgres -c "createuser -s odoo15"
+            wget https://github.com/wkhtmltopdf/wkhtmltopdf/releases/download/0.12.5/wkhtmltox_0.12.5-1.bionic_amd64.deb
+            apt install ./wkhtmltox_0.12.5-1.bionic_amd64.deb
+            su - odoo15
+            git clone https://www.github.com/odoo/odoo --depth 1 --branch 15.0 /opt/odoo15/odoo
+            cd /opt/odoo15
+            python3 -m venv odoo-venv
+            source odoo-venv/bin/activate
+            pip3 install wheel
+            pip3 install -r odoo/requirements.txt
+            deactivate
+            mkdir /opt/odoo15/odoo-custom-addons
+            exit
+
+  # Application Load Balancer
+  WebsiteALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Condition: CreatePrivateResources
+    Properties: 
+      Name: website-alb
+      Type: application
+      Scheme: internet-facing
+      IpAddressType: ipv4
+      SecurityGroups: 
+        - !Ref PublicSg
+      Subnets: 
+        - !Ref PublicSubnetA
+        - !Ref PublicSubnetB
+  
+  # Application Load Balancer's Target Group
+  WebsiteALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Condition: CreatePrivateResources
+    Properties: 
+      HealthCheckEnabled: true
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckPort: 80
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 3
+      Name: website-tg
+      Port: 80
+      Protocol: HTTP
+      Targets: 
+        - Id: !Ref Development
+        - Id: !Ref Staging
+      TargetType: instance
+      UnhealthyThresholdCount: 2
+      VpcId: !Ref VPC
+
+  # Application Load Balancer's Listeners
+  WebsiteALBListeners:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: CreatePrivateResources
+    Properties: 
+      DefaultActions: 
+        - TargetGroupArn: !Ref WebsiteALBTargetGroup
+          Type: forward
+      LoadBalancerArn: !Ref WebsiteALB
+      Port: 80
+      Protocol: HTTP
+
+# Docs: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/metadata-section-structure.html
+Metadata:
+ # Control the UI display when running this template from the AWS Management Console
+ AWS::CloudFormation::Interface:
+  ParameterGroups:
+    - Label:
+        default: "SSH Access"
+      Parameters: 
+        - KeyName
+        - SSHLocation
+    - Label:
+        default: "Network Configuration"
+      Parameters:
+        - VpcCidrBlock
+        - IPv4MaskSize
+    - Label:
+        default: "Resources Configuration"
+      Parameters:
+        - InstanceType
+        - PrivateResourcesCreation
