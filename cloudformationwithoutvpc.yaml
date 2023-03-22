@@ -25,6 +25,9 @@ Parameters:
     Type: AWS::EC2::KeyPair::KeyName
     ConstraintDescription: must be the name of an existing EC2 KeyPair.
 
+  AvailabilityZone:
+    Type: AWS::EC2::AvailabilityZone::Name
+
   # EC2 allowed instance types
   InstanceType:
     Description: EC2 allowed instance types to be used 
@@ -34,6 +37,34 @@ Parameters:
       - t2.micro
       - t2.small
       - t2.medium
+  
+  # RDS Parameter
+  DBName:
+    Default: MyDatabase
+    Description: The database name
+    Type: String
+    MinLength: '1'
+    MaxLength: '64'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric
+      characters.
+  DBUser:
+    NoEcho: 'false'
+    Description: The database admin account username
+    Type: String
+    MinLength: '1'
+    MaxLength: '16'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric
+      characters.
+  DBPassword:
+    NoEcho: 'true'
+    Description: The database admin account password
+    Type: String
+    MinLength: '8'
+    MaxLength: '41'
+    AllowedPattern: '[a-zA-Z0-9]*'
+    ConstraintDescription: must contain only alphanumeric characters.
 
 # Docs: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/mappings-section-structure.html
 Mappings:
@@ -52,6 +83,14 @@ Resources:
       GroupDescription: Enable SSH access via port 22
       SecurityGroupIngress:
       - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
         FromPort: 22
         ToPort: 22
         CidrIp: !Ref 'SSHLocation'
@@ -59,7 +98,8 @@ Resources:
   # EC2
   Development:
     Type: AWS::EC2::Instance
-    Properties: 
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone 
       ImageId: !FindInMap [AWSRegionUbuntuAMI, !Ref 'AWS::Region', HVM64]
       KeyName: !Ref KeyName
       InstanceType: !Ref InstanceType
@@ -71,6 +111,7 @@ Resources:
   Staging:
     Type: AWS::EC2::Instance
     Properties: 
+      AvailabilityZone: !Ref AvailabilityZone
       ImageId: !FindInMap [AWSRegionUbuntuAMI, !Ref 'AWS::Region', HVM64]
       KeyName: !Ref KeyName
       InstanceType: !Ref InstanceType
@@ -78,6 +119,31 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${AWS::StackName}-staging
+
+  #RDS
+  Database:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBName: !Ref 'DBName'
+      AllocatedStorage: '5'
+      DBInstanceClass: db.t3.small
+      Engine: postgres
+      #EngineVersion: 13.2
+      MasterUsername: !Ref 'DBUser'
+      MasterUserPassword: !Ref 'DBPassword'
+      #DBParameterGroupName: !Ref 'MyRDSParamGroup'
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+
+  #MyRDSParamGroup:
+    #Type: AWS::RDS::DBParameterGroup
+    #Properties:
+     # Family: postgres9.6
+     # Description: CloudFormation Sample Database Parameter Group
+      #Parameters:
+      #  autocommit: '1'
+       # log_statement: 'all'
+      #  max_connections: '100'
 
 
 # Docs: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/metadata-section-structure.html
