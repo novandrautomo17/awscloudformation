@@ -484,6 +484,31 @@ Resources:
         - Key: GroupName
           Value: private-ssh-and-ping-sg
 
+  RDSSg:
+    Type: AWS::EC2::SecurityGroup
+    Condition: CreatePrivateResources
+    Properties:
+      GroupDescription: PostgreSQL access for private subnets
+      GroupName: private-postgresql-sg
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - CidrIp: !Ref VpcCidrBlock
+          Description: PostgreSQL Access
+          IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          Description: Allow all
+          FromPort: -1
+          IpProtocol: "-1"
+          ToPort: -1
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-private-postgresql-sg
+        - Key: GroupName
+          Value: private-postgresql-sg
+
   # EC2 
   Jumphost:
     Type: AWS::EC2::Instance
@@ -636,6 +661,8 @@ Resources:
       MasterUsername: !Ref 'DBUser'
       MasterUserPassword: !Ref 'DBPassword'
       DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups: 
+        - !Ref RDSSg
     DeletionPolicy: Snapshot
     UpdateReplacePolicy: Snapshot
 
